@@ -29,8 +29,7 @@ import struct
 import re
 import base64
 import httplib
-import sys
-from multiprocessing import Process
+from threading import Thread
 import Queue
 import pts
 
@@ -145,11 +144,21 @@ class WorkSubmitter(threading.Thread):
         self.daemon = True
         self.queue = queue
         self.rpc = BitcoinRPC()
+        self.stats_time = time.time()
 
     def run(self):
         while 1:
             try:
                 result = self.queue.get(block=True)
+
+                if self.stats_time < time.time() - 30:
+                    self.stats_time = time.time()
+                    print 'Worker %d hpm %f wpm %f queue %d/%d' % (
+                        result['miner'].id,
+                        result['miner'].hashes / (time.time() - result['miner'].start_time) * 60.0,
+                        result['miner'].works / (time.time() - result['miner'].start_time) * 60.0,
+                        result['miner'].switch.work_queue.qsize(), result['miner'].switch.result_queue.qsize())
+
                 output = result['output']
                 numpairs = struct.unpack('<Q', output[-8:])[0]
                 colls = set()
@@ -252,7 +261,7 @@ def miner_thread(id):
 
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         print "Usage: %s CONFIG-FILE" % sys.argv[0]
         sys.exit(1)
 
@@ -296,15 +305,15 @@ if __name__ == '__main__':
     thr_list = []
     for dev_id in settings['devices'].split(','):
         thr_id = int(dev_id)
-        p = Process(target=miner_thread, args=(thr_id,))
+        p = Thread(target=miner_thread, args=(thr_id,))
         p.start()
         thr_list.append(p)
         time.sleep(1)            # stagger threads
 
     print time.asctime(), "Miner Starts - %s:%s" % (settings['host'], settings['port'])
     try:
-        for thr_proc in thr_list:
-            thr_proc.join()
+        while True:
+            raw_input()
     except KeyboardInterrupt:
         pass
     print time.asctime(), "Miner Stops - %s:%s" % (settings['host'], settings['port'])
